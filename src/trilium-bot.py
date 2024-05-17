@@ -99,7 +99,7 @@ def send_welcome(message):
     # Note: if buttons modified, a new `/start` is required to get the latest buttons.
     chat_id = message.chat.id
 
-    markup = types.ReplyKeyboardMarkup(row_width=2, one_time_keyboard=True)
+    markup = types.ReplyKeyboardMarkup(row_width=1, one_time_keyboard=True)
 
     btn_todo = types.KeyboardButton('TODO List')
     btn_toggle_quick_add = types.KeyboardButton('Toggle Quick Add')
@@ -245,7 +245,8 @@ def echo_all(message):
         logger.info(f"day_note {day_note['noteId']}")
         ea.create_note(
             parentNoteId=day_note['noteId'],
-            title="TG message",
+            # title="TG message",
+            title=datetime.now().strftime("%Y-%m-%d %a %H:%M:%S"),
             type="text",
             content=msg,
         )

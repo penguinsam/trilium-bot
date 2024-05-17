@@ -10,5 +10,3 @@ admin_list = []
 http_proxy = None
 trilium_server_url = 'http://localhost:8080'
 etapi_token = 'YOUR_ETAPI_TOKEN'
-
-

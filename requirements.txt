@@ -1,4 +1,5 @@
 pyTelegramBotAPI
 loguru
-trilium-py==0.8.7
+trilium-py==0.8.9
 schedule
+python-magic
