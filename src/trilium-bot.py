@@ -2,10 +2,14 @@ import json
 import os
 import sys
 import threading
+import validators
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
+import urllib3, cloudscraper
+from bs4 import BeautifulSoup
 
 import schedule
 import telebot
@@ -99,7 +103,7 @@ def send_welcome(message):
     # Note: if buttons modified, a new `/start` is required to get the latest buttons.
     chat_id = message.chat.id
 
-    markup = types.ReplyKeyboardMarkup(row_width=1, one_time_keyboard=True)
+    markup = types.ReplyKeyboardMarkup(row_width=2, one_time_keyboard=True)
 
     btn_todo = types.KeyboardButton('TODO List')
     btn_toggle_quick_add = types.KeyboardButton('Toggle Quick Add')
@@ -204,11 +208,56 @@ def process_update_todo(message):
     bot.send_message(chat_id, text="Current TODO List",
                      reply_markup=build_todo_list_markup(todo_list))
 
+def get_url_title(url):
+    try:
+        scraper = cloudscraper.create_scraper()
+        r = scraper.get(url)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        title = soup.find('title').string if r.status_code == 200 and soup.find('title') else url
+        return title
+    except Exception as e:
+        return url
 
-@bot.message_handler(func=lambda message: True)
+def get_url_preview(url):
+    try:
+        scraper = cloudscraper.create_scraper()
+        r = scraper.get(url)
+        soup = BeautifulSoup(r.text, 'html.parser')
+
+        meta_image = soup.find('meta', property='og:image')
+        image = meta_image['content'] if meta_image and 'content' in meta_image.attrs else None
+        return f'<figure class="image image-style-block-align-left"><img src="{image}"></figure>' if image != None else None
+    except Exception as e:
+        return url, None
+
+def process_text_message(message):
+    url_pattern = re.compile(r'(https?://\S+)')
+
+    def replace_with_anchor(match):
+        url = match.group(0)
+        title = get_url_title(url)
+        return f'<a href="{url}">{title}</a>'
+
+    url_preview = None
+    urls = url_pattern.findall(message)
+    for url in urls:
+        if url_preview is None:
+            url_preview = get_url_preview(url)
+        else:
+            break
+
+    result = url_pattern.sub(replace_with_anchor, message).replace("\n", "<br/>")
+    if url_preview != None:
+        return f'{result}{url_preview}'
+    else:
+        return result
+
+#@bot.message_handler(func=lambda message: True)
+@bot.message_handler(content_types=['text', 'photo'])
 @restricted
 def echo_all(message):
-    logger.info(f'Receive message')
+    logger.info(f'Receive {message.content_type} message')
 
     msg = message.text
 
@@ -242,14 +291,28 @@ def echo_all(message):
 
     if config['quick_add']:
         day_note = ea.inbox(datetime.now().strftime("%Y-%m-%d"))
+        note_title = datetime.now().strftime("%Y-%m-%d %a %H:%M:%S").upper()
         logger.info(f"day_note {day_note['noteId']}")
-        ea.create_note(
-            parentNoteId=day_note['noteId'],
-            # title="TG message",
-            title=datetime.now().strftime("%Y-%m-%d %a %H:%M:%S"),
-            type="text",
-            content=msg,
-        )
+        if message.content_type == 'text':
+            ea.create_note(
+                parentNoteId=day_note['noteId'],
+                # title=datetime.now().strftime("%c"),
+                title=note_title,
+                type="text",
+                content=process_text_message(msg)
+            )
+        elif message.content_type == 'photo':
+            file_id = message.photo[-1].file_id
+            file_info = bot.get_file(file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            with open(f"/tmp/{file_id}.jpg", 'wb') as new_file:
+                new_file.write(downloaded_file)
+            ea.create_image_note(
+                parentNoteId=day_note['noteId'],
+                title=note_title,
+                image_file=f"/tmp/{file_id}.jpg",
+            )
+            
         return bot.reply_to(message, "Added to Trilium")
 
     return bot.reply_to(message, msg)
