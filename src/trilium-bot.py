@@ -208,6 +208,7 @@ def process_update_todo(message):
     bot.send_message(chat_id, text="Current TODO List",
                      reply_markup=build_todo_list_markup(todo_list))
 
+
 def get_url_title(url):
     try:
         scraper = cloudscraper.create_scraper()
@@ -218,6 +219,7 @@ def get_url_title(url):
         return title
     except Exception as e:
         return url
+
 
 def get_url_preview(url):
     try:
@@ -231,7 +233,8 @@ def get_url_preview(url):
     except Exception as e:
         return url, None
 
-def process_text_message(message):
+
+def massage_text_message(message):
     url_pattern = re.compile(r'(https?://\S+)')
 
     def replace_with_anchor(match):
@@ -253,10 +256,24 @@ def process_text_message(message):
     else:
         return result
 
-#@bot.message_handler(func=lambda message: True)
-@bot.message_handler(content_types=['text', 'photo'])
+
+def create_attribute_from_tags(noteId, message):
+    pattern = r'#(\w+)'
+
+    tags = re.findall(pattern, message)
+    for tag in tags:
+        ea.create_attribute(
+            noteId=noteId,
+            type='label',
+            name='tag',
+            value=tag,
+            isInheritable=True
+        )
+
+
+@bot.message_handler(content_types=['text'])
 @restricted
-def echo_all(message):
+def process_text_message(message):
     logger.info(f'Receive {message.content_type} message')
 
     msg = message.text
@@ -293,29 +310,65 @@ def echo_all(message):
         day_note = ea.inbox(datetime.now().strftime("%Y-%m-%d"))
         note_title = datetime.now().strftime("%Y-%m-%d %a %H:%M:%S").upper()
         logger.info(f"day_note {day_note['noteId']}")
-        if message.content_type == 'text':
-            ea.create_note(
-                parentNoteId=day_note['noteId'],
-                # title=datetime.now().strftime("%c"),
-                title=note_title,
-                type="text",
-                content=process_text_message(msg)
-            )
-        elif message.content_type == 'photo':
-            file_id = message.photo[-1].file_id
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            with open(f"/tmp/{file_id}.jpg", 'wb') as new_file:
-                new_file.write(downloaded_file)
-            ea.create_image_note(
-                parentNoteId=day_note['noteId'],
-                title=note_title,
-                image_file=f"/tmp/{file_id}.jpg",
-            )
-            
-        return bot.reply_to(message, "Added to Trilium")
+
+        res = ea.create_note(
+            parentNoteId=day_note['noteId'],
+            title=note_title,
+            type="text",
+            content=massage_text_message(msg)
+        )
+        create_attribute_from_tags(res['note']['noteId'], msg)
+
+        return bot.reply_to(message, f"Added to Trilium [{res['note']['noteId']}]")
 
     return bot.reply_to(message, msg)
+
+
+@bot.message_handler(content_types=['photo'])
+@restricted
+def process_photo_message(message):
+    day_note = ea.inbox(datetime.now().strftime("%Y-%m-%d"))
+    note_title = datetime.now().strftime("%Y-%m-%d %a %H:%M:%S").upper()
+    logger.info(f"day_note {day_note['noteId']}")
+        
+    file_id = message.photo[-1].file_id
+    file_info = bot.get_file(file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    photo_path = f"/tmp/{file_id}.jpg"
+    with open(photo_path, 'wb') as new_file:
+        new_file.write(downloaded_file)
+            
+    if message.caption:
+        ## 1. Create a note with photo caption
+        res = ea.create_note(
+            parentNoteId=day_note['noteId'],
+            title=note_title,
+            type="text",
+            content=message.caption
+        )
+
+        ## 2. Attach photo to the note
+        atm = ea.create_attachment(
+            ownerId=res['note']['noteId'],
+            file_path=photo_path,
+        )
+
+        attachmentId = atm['attachmentId']
+        role = atm['role']
+        file_name = atm['title']
+        ea.update_note_content(
+            res['note']['noteId'], f'{message.caption}<figure class="image image-style-block-align-left"><img src="api/attachments/{attachmentId}/{role}/{file_name}"></figure>'
+        )
+
+        ## 3. Create attributes from tags, if any
+        create_attribute_from_tags(res['note']['noteId'], message.caption)
+    else:
+        res = ea.create_image_note(
+            parentNoteId=day_note['noteId'],
+            title=note_title,
+            image_file=photo_path,
+        )
+    return bot.reply_to(message, f"Added to Trilium [{res['note']['noteId']}]")
 
 
 def save_config():
